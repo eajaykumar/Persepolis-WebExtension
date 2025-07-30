@@ -37,7 +37,7 @@ function setExtensionConfig() {
     BrowserNameSpace.runtime.sendMessage({
         type: "setExtensionConfig",
         data: {
-            pdmInterrupt, contextMenu, keywords 
+            pdmInterrupt, contextMenu, keywords
         }
     })
 
@@ -47,7 +47,24 @@ function setExtensionConfig() {
 $(document).ready(function () {
 
     BrowserNameSpace.runtime.sendMessage({ type: "getExtensionConfig" }, (config) => {
-        let { pdmInterrupt, contextMenu, keywords } = config
+        // --- ADDED CHECKS FOR ROBUSTNESS ---
+        if (BrowserNameSpace.runtime.lastError) {
+            console.error("Error receiving config from background:", BrowserNameSpace.runtime.lastError.message);
+            // Optionally, you can disable UI elements or show an error message to the user here.
+            return;
+        }
+        if (!config) {
+            console.error("Received undefined config from background script. Initializing with default values.");
+            // Provide default values if config is undefined to prevent errors
+            config = {
+                pdmInterrupt: false, // Default value if config is not received
+                contextMenu: false,  // Default value
+                keywords: ''         // Default value
+            };
+        }
+        // --- END OF ADDED CHECKS ---
+
+        let { pdmInterrupt, contextMenu, keywords } = config;
 
         //Init variables from config
         keywordsDom = $('#keywords');
@@ -62,11 +79,8 @@ $(document).ready(function () {
 
         //Listen on changes and save them immediately
         dlInterruptCheckBox.on("change", setExtensionConfig);
-        // keywordsDom.on("change",saveSettings);
 
         keywordsDom.on("change paste keyup", setExtensionConfig);
         contextMenuCheckbox.on("change", setExtensionConfig);
     });
-
-
 });

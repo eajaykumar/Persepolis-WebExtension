@@ -1,4 +1,5 @@
 {
+
   "background": {
     "scripts": [
       "background.js"
@@ -28,8 +29,6 @@
     }
   ],
 
-
-
   "description": "Persepolis Download Manager Integration extension replaces default download manager of FireFox by Persepolis Download Manager.",
   "homepage_url": "https://github.com/persepolisdm/Persepolis-WebExtension",
   "icons": {
@@ -42,13 +41,12 @@
   "name": "Persepolis Download Manager Integration",
   "short_name": "Persepolis",
   "permissions": [
-    "<all_urls>",
-    "nativeMessaging",
-    "contextMenus",
     "downloads",
-    "cookies",
     "storage",
-    "scripting"
+    "cookies",
+    "contextMenus",
+    "scripting",
+    "nativeMessaging"
   ],
   "version": "4.0.0",
   "host_permissions": ["*://*/"],

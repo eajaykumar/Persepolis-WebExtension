@@ -1,16 +1,10 @@
 {
   "background": {
-    "service_worker": "background.js",
-    "scripts": [
-      "background.js"
-    ]
+    "service_worker": "background.js"
   },
   "action": {
-    "default_title": "PDM Integration",
-    "default_popup": "popup/popup.html",
-    "default_icon": {
-      "32": "icons/icon_32.png"
-    }
+    "default_icon": "icons/icon_32.png",
+    "default_popup": "popup/popup.html"
   },
   "content_scripts": [
     {
@@ -31,10 +25,7 @@
       "match_about_blank":true
     }
   ],
-
-  "key":"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoCgWSDIitikIuLvTLERSUeSSRobagH6W9yZNsC+1+3XVX8Ae83ZPGbjuHhb4J2vQzSDfr2TiWeLya2z54JH2KCVTHdr++Mf8xlykobf83/HTu2LcQzI7RPb53KWgGMrEszuRQdxhSeYwogCR6BDQaRqRmBbsAg40VuLI53KtXrvESu3gNtDdIpG/S1EIxK6VnwXL+UXxVmPQxQ0tFyTX5R0tyBdbKAx7UwT9z8fQN4PP4QBHFzU4Pqrln66evdYb5NpZw9RAZxhLW4chk4kK2BMz4Ym10J1yOjvZ4w9MBHJsIn38EJSfYSDWOlUReZNoQXHN4J6UhMQbuWEZO6SbVwIDAQAB",
-
-  "description": "Persepolis Download Manager Integration extension replaces default download manager of FireFox by Persepolis Download Manager.",
+  "description": "Persepolis Download Manager Integration extension replaces default download manager of Google Chrome by Persepolis Download Manager.",
   "homepage_url": "https://github.com/persepolisdm/Persepolis-WebExtension",
   "icons": {
     "32": "icons/icon_32.png",
@@ -42,25 +33,19 @@
     "128": "icons/icon_128.png"
   },
   "manifest_version": 3,
-
+  "minimum_chrome_version": "19.0",
   "name": "Persepolis Download Manager Integration",
   "short_name": "Persepolis",
+  "offline_enabled": true,
   "permissions": [
     "nativeMessaging",
     "contextMenus",
     "downloads",
     "cookies",
     "storage",
-    "scripting"  
+    "scripting",
+    "tabs"
   ],
-  "version": "4.0.0",
   "host_permissions": ["*://*/"],
-  "content_security_policy": {},
-
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "com.persepolis.pdmchromewrapper@persepolisdm.github.io",
-      "strict_min_version": "50.0"
-    }
-  }
+  "version": "4.0.0"
 }

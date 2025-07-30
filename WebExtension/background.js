@@ -22,7 +22,150 @@
 
 const DEBUG = true;
 const VERSION = "4.0.0"; // TODO: Does it work?
-const hostName = 'com.persepolis.pdmchromewrapper';
+// const hostName = getNativeHostName();
+const browserEnv = getBrowserApi();
+const BrowserNameSpace = browserEnv.BrowserNameSpace;
+
+
+// Only set up config (icons, context menu) on install/startup, not native connection
+async function ensureExtensionConfigOnStartup() {
+    try {
+        await setConfig();
+    } catch(e) {
+        console.error("Error during extension config setup (startup):", e);
+    }
+}
+
+BrowserNameSpace.runtime.onInstalled.addListener(ensureExtensionConfigOnStartup);
+if (BrowserNameSpace.runtime.onStartup) {
+    BrowserNameSpace.runtime.onStartup.addListener(ensureExtensionConfigOnStartup);
+}
+
+
+function detectBrowser() {
+    const ua = navigator.userAgent;
+    if (ua.includes("Edge")) return "edge";
+    if (navigator.brave && typeof navigator.brave.isBrave === "function") return "brave";
+    if (ua.includes("Vivaldi")) return "vivaldi";
+    if (ua.includes("Opera") || ua.includes("OPR")) return "opera";
+    if (ua.includes("Chromium")) return "chromium";
+    if (ua.includes("Firefox")) return "firefox";
+    if (ua.includes("Chrome")) return "chrome";
+    return "unknown";
+}
+
+// Test native connection with handshake and timeout
+function testNativeConnection(host, isStartup = false) {
+    console.log(`[PDM] testNativeConnection (handshake) called for host: ${host}`);
+    return new Promise((resolve, reject) => {
+        let port;
+        try {
+            port = chrome.runtime.connectNative(host);
+        } catch (e) {
+            return reject(`Unable to connect to host ${host}: ${e.message}`);
+        }
+
+        let isDone = false;
+        const timeout = setTimeout(() => {
+            if (!isDone) {
+                isDone = true;
+                console.warn(`[PDM] testNativeConnection: handshake timeout for host: ${host}, disconnecting port`);
+                try { port.disconnect(); } catch (_) {}
+                reject("Handshake timeout");
+            }
+        }, 3000); // 3s timeout
+
+        port.onMessage.addListener((msg) => {
+            if (isDone) return;
+            isDone = true;
+            clearTimeout(timeout);
+            console.log(`[PDM] testNativeConnection: received message from host ${host}:`, msg);
+            try { port.disconnect(); } catch (_) {}
+            resolve(msg);
+        });
+
+        port.onDisconnect.addListener(() => {
+            if (!isDone) {
+                isDone = true;
+                clearTimeout(timeout);
+                const err = chrome.runtime.lastError ? chrome.runtime.lastError.message : "Disconnected before handshake";
+                console.warn(`[PDM] testNativeConnection: failed for host ${host}. Error: ${err}`);
+                reject(err);
+            }
+        });
+
+        // send handshake request
+        try {
+            port.postMessage({ action: "handshake", version: "4.0.0" });
+        } catch (e) {
+            if (!isDone) {
+                isDone = true;
+                clearTimeout(timeout);
+                reject(`Handshake send failed: ${e.message}`);
+            }
+        }
+    });
+}
+// Robust async LibreWolf detection
+async function detectLibreWolf() {
+    let isLibreWolf = navigator.userAgent.toLowerCase().includes("librewolf");
+    try {
+        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.getBrowserInfo) {
+            const info = await browser.runtime.getBrowserInfo();
+            if (info.name && info.name.toLowerCase().includes("librewolf")) isLibreWolf = true;
+        }
+    } catch (e) {}
+    return isLibreWolf;
+}
+
+// Initialize native connection with fallback between hosts
+async function initializeNativeConnection() {
+    console.log("[PDM] initializeNativeConnection called");
+
+    // Detect browser and build candidate hosts
+    let browser = detectBrowser();
+    let browserHost = `com.persepolis.${browser}`;
+    const fallbackHost = `com.persepolis.pdmchromewrapper`;
+
+    // Log detected browser
+    console.log(`[PDM][BROWSER DETECT] Browser detected by detectBrowser(): ${browser}`);
+
+    // Special handling for LibreWolf
+    if (await detectLibreWolf()) {
+        browser = 'librewolf';
+        browserHost = 'com.persepolis.librewolf';
+        console.log('[PDM][BROWSER DETECT] LibreWolf detected, using host:', browserHost);
+    } else {
+        console.log(`[PDM][BROWSER DETECT] Final browser used: ${browser}`);
+    }
+
+    const candidateHosts = [
+        browserHost,
+        fallbackHost
+    ];
+
+    for (const host of candidateHosts) {
+        try {
+            console.log(`[PDM] [FALLBACK LOG] Trying host (handshake): ${host}`);
+            const response = await testNativeConnection(host);
+
+            // If the response is valid and enable=true, save host
+            if (response?.enable) {
+                console.log(`[PDM] Native connection established with ${host}`);
+                await chrome.storage.local.set({ savedHostName: host });
+                console.log(`[PDM][HOST] Host selected and saved: ${host}`);
+                return host; // Return immediately after success
+            }
+        } catch (err) {
+            console.warn(`[PDM] [FALLBACK LOG] Host handshake failed (${host}). Error: ${err?.message}`);
+        }
+    }
+
+    // If all attempts fail
+    throw new Error("Failed to initialize native connection: No available native host.");
+}
+
+
 
 
 function getBrowserApi(){
@@ -141,8 +284,7 @@ function getCookies(url,callback) {
     let blacklistDecode = [
         "mycdn.me"
     ];
-    const {isChrome, BrowserNameSpace, isFF} = getBrowserApi();
-    if(isChrome){
+    if (browserEnv.isChrome) {
         BrowserNameSpace.cookies.getAll(urlQuery,(urlcookies)=>{
             let cookieArray = [];
             if (blacklistDecode.indexOf(domain)  == -1)
@@ -151,7 +293,7 @@ function getCookies(url,callback) {
                 cookieArray = urlcookies.map((cookie)=>cookie.name+ "=" + cookie.value);
             callback(cookieArray);
         });
-    }else if(isFF){
+    } else if (browserEnv.isFF) {
         BrowserNameSpace.cookies.getAll(urlQuery).then((urlcookies)=>{
             let cookieArray = [];
             if (blacklistDecode.indexOf(domain)  == -1)
@@ -166,25 +308,14 @@ function getCookies(url,callback) {
 
 
 function setCookies(message) {
-
     return new Promise(function(ok, fuck) {
         message.useragent = navigator.userAgent;
         try{
             getCookies(message.url, urlCookie=> {
-
-                message.cookies = urlCookie;
-                // if (false && message.referrer != null && message.referrer != "") {
-                //I know it's always false, at first it looked good but not now. So i saved the code for future jobless source code viewers like you
-                //     getCookies(message.referrer, refererCookies=> {
-                //         //if(message.cookies != refererCookies)
-                //         //message.cookies += "; "+refererCookies;//(message.cookies == refererCookies) ? "" : ("; "+refererCookies);
-                //         message.cookies = arrayUnique(message.cookies.concat(refererCookies)).join("; ");
-                //         L("final cookies With referer:");
-                //         L(message.cookies);
-                //         ok(message);
-                //     });
-                // } else {
-                message.cookies = arrayUnique(message.cookies).join("; ");
+                if (!urlCookie || urlCookie.length === 0) {
+                    console.warn("No cookies found for URL:", message.url);
+                }
+                message.cookies = arrayUnique(urlCookie).join("; ");
             });
         }catch (errors){
             L("Cookies are failed to load");
@@ -194,9 +325,6 @@ function setCookies(message) {
             ok(message);
         }
     });
-
-
-
 }
 
 function getFileNameFromUrl(link) {
@@ -212,10 +340,7 @@ function setCookieAndSendToPDM(message) {
     });
 }
 
-/**
- *
- *
- */
+
 function SendToPDM(data,callback){
     SendCustomMessage({
         url_links:data.constructor === Array ? data : [data],
@@ -224,117 +349,57 @@ function SendToPDM(data,callback){
 }
 
 
-function SendInitMessage(payload){
-    return new Promise(function(resolve, reject) {
-        //Try to connect to persepolis, if failed after timeout, disable extension
-        let timeOutPersepolisId = setTimeout(()=>{
-            return reject({PDMNotFound: true});
-        }, 5 * 1000);
+// Make sure hostName is accessible or retrieved where needed
+//Crafter for sending message to PDM
+async function SendCustomMessage(message) {
+    try {
+        // First try to get the saved host name from storage
+        const result = await chrome.storage.local.get("savedHostName");
+        console.log("[PDM][DEBUG] chrome.storage.local.get('savedHostName') returned:", result);
+        let hostName = result && result.savedHostName;
 
-        try {
-            // Connecting to the native host
-            const port = BrowserNameSpace.runtime.connectNative(hostName);
+        if (!hostName) {
+            console.warn("[PDM] No savedHostName found. Re-initializing native connection...");
+            hostName = await initializeNativeConnection();
+        }
 
-            // Listening for messages from the native host
+        if (!hostName) {
+            throw new Error("Failed to determine native host name after initialization attempt.");
+        }
+
+        console.log(`[PDM] Sending custom message to host: ${hostName}`);
+        console.log(`[PDM][HOST] Using native host: ${hostName}`);
+
+        //  Open connection to the correct host
+        const port = chrome.runtime.connectNative(hostName);
+        port.postMessage(message);
+
+        return new Promise((resolve, reject) => {
+            let responded = false;
+
             port.onMessage.addListener((response) => {
-                console.log('Received response:', response);
-                clearInterval(timeOutPersepolisId);
-                setTimeout(()=>{resolve({PDMNotFound: false})}, 5*1000);
+                responded = true;
+                console.log(`[PDM] Received response from ${hostName}:`, response);
+                resolve(response);
+                port.disconnect();
             });
 
-            // Handling disconnection
             port.onDisconnect.addListener(() => {
-                if (chrome.runtime.lastError) {
-                    console.error('Disconnected due to an error:', chrome.runtime.lastError);
-                    resolve({PDMNotFound: false});
-                } else {
-                    console.log('Disconnected from the native host.');
+                if (!responded) {
+                    const errorMsg = chrome.runtime.lastError?.message || "Disconnected before response";
+                    console.error(`[PDM] Native host ${hostName} disconnected: ${errorMsg}`);
+                    reject(new Error(errorMsg));
                 }
             });
+        });
 
-            // Sending a message to the native host
-            console.log('Sending message to native host:', payload);
-            port.postMessage(payload);
-        } catch (error) {
-            console.error('Error communicating with the native host:', error);
-            clearInterval(timeOutPersepolisId);
-            return reject(error);
-        }
-    });
-    //
-    // const PersepolisConnection = BrowserNameSpace.runtime.connectNative(hostName);
-    // PersepolisConnection
-
-    //
-    // BrowserNameSpace.runtime.sendNativeMessage(hostName, data, (response) =>{
-    //     L(`Got data: ${JSON.stringify(response)}`);
-    //     if(callback){
-    //         callback(response); //Call the callback with response if it's available
-    //     }
-    //
-    // });
-
-    //
-    // SendCustomMessage(payload, (response)=>{
-    //         if (response) {
-    //             L("Connection to Persepolis was successful :)");
-    //             L(response)
-    //             ok({PDMNotFound: false})
-    //             clearTimeout(timeOutPersepolisId);
-    //             return;
-    //         }
-    //
-    //         L("Init message failed :(")
-    //         ok({PDMNotFound: true})
-    //     }
-    // );
-    //
-
-
+    } catch (err) {
+        console.error("Failed to send custom message:", err);
+        throw err;
+    }
 }
 
-//Crafter for sending message to PDM
-function SendCustomMessage(data){
-    return new Promise(function(resolve, reject) {
-        // L(`Sening NHM message:`)
-        // L(data)
-        // BrowserNameSpace.runtime.sendNativeMessage(hostName, data, (response) =>{
-        //     L(`Got data: ${JSON.stringify(response)}`);
-        //     if(callback){
-        //         callback(response); //Call the callback with response if it's available
-        //     }
-        //
-        // });
-        //Try to connect to persepolis, if failed after timeout, disable extension
-        try {
-            // Connecting to the native host
-            const port = BrowserNameSpace.runtime.connectNative(hostName);
 
-
-            let disconnectTimout = setTimeout(()=>{
-                port.disconnect();
-            }, 5 * 1000);
-
-
-            // Listening for messages from the native host
-            port.onMessage.addListener((response) => {
-                clearInterval(disconnectTimout);
-                port.disconnect();
-                resolve(response);
-            });
-
-            // Handling disconnection
-            port.onDisconnect.addListener(() => {
-                resolve();
-            });
-            port.postMessage(data);
-        } catch (error) {
-            console.error('Error communicating with the native host:', error);
-            clearInterval(disconnectTimout);
-            return reject(error);
-        }
-    });
-}
 
 async function updateKeywords(data) {
     const keywords = data.toLowerCase()
@@ -359,10 +424,14 @@ async function isBlackListed(url) {
 async function setInterruptDownload(interrupt) {
     L("Interrupts:" + interrupt);
     await chromeStorageSetter('pdmInterrupt', interrupt);
-    if (interrupt) {
-        BrowserNameSpace.action.setIcon({path: "./icons/icon_32.png"});
-    } else {
-        BrowserNameSpace.action.setIcon({path: "./icons/icon_disabled_32.png"});
+    // Use .action if available, else fallback to .browserAction (for MV2/Firefox/LibreWolf)
+    const setIcon = (BrowserNameSpace.action && BrowserNameSpace.action.setIcon) ? BrowserNameSpace.action.setIcon : (BrowserNameSpace.browserAction && BrowserNameSpace.browserAction.setIcon ? BrowserNameSpace.browserAction.setIcon : null);
+    if (setIcon) {
+        if (interrupt) {
+            setIcon({path: "./icons/icon_32.png"});
+        } else {
+            setIcon({path: "./icons/icon_disabled_32.png"});
+        }
     }
 }
 
@@ -394,7 +463,12 @@ async function ConfigGetVal(key, default_value='') {
     let configValue = default_value;
     try {
         configValue = await chromeStorageGetter(key);
-    } catch {}
+    } catch (e) {
+        console.error('[PDM] Error getting key from storage:', key, e);
+    }
+    if (key === 'savedHostName') {
+        console.log('[PDM] ConfigGetVal for savedHostName:', configValue);
+    }
     L("Getting Key:" + key + " ::  " + configValue)
     if (["true", "false"].includes(configValue))
         return configValue == "true"; // Converts string Boolean to Boolean
@@ -474,17 +548,6 @@ async function setExtensionConfig({ pdmInterrupt, contextMenu, keywords }) {
 
 
 
-const {BrowserNameSpace, isChrome, isFF, isVivaldi} = getBrowserApi();
-BrowserNameSpace.runtime.onInstalled.addListener(async () => {
-    let PDMNotFound = false;
-    try {
-        PDMNotFound = (await SendInitMessage({version: VERSION})).PDMNotFound;
-        await setConfig();
-    } catch(e) {
-        PDMNotFound = true;
-    }
-    await setExtensionConfig({pdmInterrupt: PDMNotFound})
-});
 
 BrowserNameSpace.runtime.onMessage.addListener((request, sender, sendResponse) => {
     L("Inside runtime on message")
@@ -551,7 +614,6 @@ BrowserNameSpace.runtime.onMessage.addListener((request, sender, sendResponse) =
 
 
 BrowserNameSpace.contextMenus.onClicked.addListener(function (info, tab) {
-    const { BrowserNameSpace, isChrome, isFF, isVivaldi } = getBrowserApi();
     "use strict";
     switch (info.menuItemId) {
         case "download_with_pdm":
@@ -588,7 +650,6 @@ BrowserNameSpace.contextMenus.onClicked.addListener(function (info, tab) {
     }
 });
 
-
 // This api is called before onCreated
 // So maybe a flag and use existing method??
 // Firefox interrupt has issues and 
@@ -598,10 +659,36 @@ BrowserNameSpace.contextMenus.onClicked.addListener(function (info, tab) {
 //Cause firefox first find file type then start download but chrome uses another event
 //Vivaldi uses Chrome engine, But saves files like firefox :|
 
-// BrowserNameSpace.downloads.onDeterminingFilename.addListener(handleDownloadIterrupts)
+// Robust detection for all major browsers, including Brave using navigator.brave.isBrave()
+(async () => {
+    const ua = navigator.userAgent.toLowerCase();
+    const isLibreWolf = ua.includes('librewolf');
+    const isFF = browserEnv.isFF || ua.includes('firefox');
+    const isVivaldi = browserEnv.isVivaldi || ua.includes('vivaldi');
+    const isOpera = ua.includes('opr') || ua.includes('opera');
+    const isChromium = ua.includes('chromium') && !isVivaldi && !isOpera;
+    let isBrave = false;
+    if (navigator.brave && typeof navigator.brave.isBrave === 'function') {
+        try {
+            isBrave = await navigator.brave.isBrave();
+        } catch (e) {
+            isBrave = false;
+        }
+    }
+    const isChrome = browserEnv.isChrome && ua.includes('chrome') && !isVivaldi && !isChromium && !isBrave && !isOpera;
 
-// This works for chrome, chromium, brave 
-BrowserNameSpace.downloads.onCreated.addListener(handleDownloadIterrupts)
+   
+    if (isFF && BrowserNameSpace.downloads.onDeterminingFilename) {
+        // Prefer onDeterminingFilename for Firefox if available
+        BrowserNameSpace.downloads.onDeterminingFilename.addListener(handleDownloadIterrupts);
+    } else if ((isLibreWolf || isFF) && BrowserNameSpace.downloads.onCreated) {
+        // Fallback for Firefox/LibreWolf if onDeterminingFilename is not available
+        BrowserNameSpace.downloads.onCreated.addListener((downloadItem) => handleDownloadIterrupts(downloadItem, null));
+    } else if ((isChrome || isVivaldi || isOpera || isChromium || isBrave) && BrowserNameSpace.downloads.onCreated) {
+        // All Chromium-based browsers
+        BrowserNameSpace.downloads.onCreated.addListener((downloadItem) => handleDownloadIterrupts(downloadItem, null));
+    }
+})();
 
 /**
  *
@@ -609,36 +696,58 @@ BrowserNameSpace.downloads.onCreated.addListener(handleDownloadIterrupts)
  * @param {function | undefined} suggest
  */
 async function handleDownloadIterrupts(downloadItem, suggest) {
+    console.log('[PDM][DEBUG] handleDownloadIterrupts FIRED:', downloadItem);
     const { BrowserNameSpace } = getBrowserApi();
-    let { pdmInterrupt } = await getExtensionConfig()
-    if (!pdmInterrupt) return suggest?.call();
+    let { pdmInterrupt } = await getExtensionConfig();
+    console.log('[PDM] handleDownloadIterrupts called:', downloadItem);
+    if (!pdmInterrupt) {
+        console.log('[PDM] pdmInterrupt is false, not capturing.');
+        if (typeof suggest === 'function') suggest();
+        return;
+    }
 
     let url = downloadItem['finalUrl'] || downloadItem['url'];
-    if (!url) return suggest?.call();
-    if (await isBlackListed(url)) return suggest?.call();
+    if (!url) {
+        console.log('[PDM] No URL found in downloadItem.');
+        if (typeof suggest === 'function') suggest();
+        return;
+    }
+    if (await isBlackListed(url)) {
+        console.log('[PDM] URL is blacklisted:', url);
+        if (typeof suggest === 'function') suggest();
+        return;
+    }
 
-
-    let fileName = downloadItem['filename'];
-    const MIN_FILE_SIZE_INTERRUPT = 5 * (1024 * 1024); // Don't interrupt downloads less that 1 mg
-    let extension = fileName.split(".").pop();
+    let fileName = downloadItem['filename'] || '';
+    const MIN_FILE_SIZE_INTERRUPT = 5 * (1024 * 1024); // Don't interrupt downloads less than 5 MB
+    let extension = fileName.split('.').pop();
 
     if (
-        (fileName !== "" && await isBlackListed(extension)) ||
-        (0 < downloadItem.fileSize && downloadItem.fileSize < MIN_FILE_SIZE_INTERRUPT) // File size is determined and is less than MIN_FILE_SIZE
-    )
-        return suggest?.call();
+        (fileName !== '' && await isBlackListed(extension)) ||
+        (0 < downloadItem.fileSize && downloadItem.fileSize < MIN_FILE_SIZE_INTERRUPT)
+    ) {
+        console.log('[PDM] File extension or size is blacklisted/skipped:', extension, downloadItem.fileSize);
+        if (typeof suggest === 'function') suggest();
+        return;
+    }
 
-
+    // Log file size for debug
     setTimeout(() => {
-        console.log(downloadItem.fileSize);
+        console.log('[PDM] File size (delayed):', downloadItem.fileSize);
     }, 2000);
 
+    try {
+        await BrowserNameSpace.downloads.cancel(downloadItem.id); // Cancel the download
+        await BrowserNameSpace.downloads.erase({ id: downloadItem.id }); // Erase the download from list
+        console.log('[PDM] Download canceled and erased:', downloadItem.id);
+    } catch (e) {
+        console.warn('[PDM] Error canceling/erasing download:', e);
+    }
 
-    BrowserNameSpace.downloads.cancel(downloadItem.id); // Cancel the download
-    BrowserNameSpace.downloads.erase({ id: downloadItem.id }); // Erase the download from list
     let msg = new UrlMessage();
     msg.url = url;
-    msg.referrer = downloadItem['referrer'];
+    msg.referrer = downloadItem['referrer'] || '';
     setCookieAndSendToPDM(msg);
 
+    // Do NOT call suggest() after canceling, as we want to fully intercept
 }
