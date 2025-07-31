@@ -44,10 +44,10 @@ if (BrowserNameSpace.runtime.onStartup) {
 
 function detectBrowser() {
     const ua = navigator.userAgent;
-    if (ua.includes("Edge")) return "edge";
+    if (ua.includes("Edg")) return "edge";
     if (navigator.brave && typeof navigator.brave.isBrave === "function") return "brave";
     if (ua.includes("Vivaldi")) return "vivaldi";
-    if (ua.includes("Opera") || ua.includes("OPR")) return "opera";
+    if (ua.includes("OPR")) return "opera";
     if (ua.includes("Chromium")) return "chromium";
     if (ua.includes("Firefox")) return "firefox";
     if (ua.includes("Chrome")) return "chrome";
@@ -124,44 +124,42 @@ async function initializeNativeConnection() {
 
     // Detect browser and build candidate hosts
     let browser = detectBrowser();
-    let browserHost = `com.persepolis.${browser}`;
-    const fallbackHost = `com.persepolis.pdmchromewrapper`;
-
-    // Log detected browser
-    console.log(`[PDM][BROWSER DETECT] Browser detected by detectBrowser(): ${browser}`);
-
-    // Special handling for LibreWolf
+    let hosts = [];
+    // Special handling for LibreWolf (async detection)
     if (await detectLibreWolf()) {
         browser = 'librewolf';
-        browserHost = 'com.persepolis.librewolf';
-        console.log('[PDM][BROWSER DETECT] LibreWolf detected, using host:', browserHost);
+    }
+    console.log(`[PDM][BROWSER DETECT] Final browser used: ${browser}`);
+
+    if (browser === 'chrome') {
+        hosts = [
+            'com.persepolis.chrome',
+            'com.persepolis.vivaldi',
+            'com.persepolis.chromium',
+            'com.persepolis.pdmchromewrapper'
+        ];
     } else {
-        console.log(`[PDM][BROWSER DETECT] Final browser used: ${browser}`);
+        hosts = [
+            `com.persepolis.${browser}`,
+            'com.persepolis.pdmchromewrapper'
+        ];
     }
 
-    const candidateHosts = [
-        browserHost,
-        fallbackHost
-    ];
-
-    for (const host of candidateHosts) {
+    for (const host of hosts) {
         try {
             console.log(`[PDM] [FALLBACK LOG] Trying host (handshake): ${host}`);
             const response = await testNativeConnection(host);
-
-            // If the response is valid and enable=true, save host
             if (response?.enable) {
                 console.log(`[PDM] Native connection established with ${host}`);
                 await chrome.storage.local.set({ savedHostName: host });
                 console.log(`[PDM][HOST] Host selected and saved: ${host}`);
-                return host; // Return immediately after success
+                return host;
             }
         } catch (err) {
             console.warn(`[PDM] [FALLBACK LOG] Host handshake failed (${host}). Error: ${err?.message}`);
         }
     }
 
-    // If all attempts fail
     throw new Error("Failed to initialize native connection: No available native host.");
 }
 

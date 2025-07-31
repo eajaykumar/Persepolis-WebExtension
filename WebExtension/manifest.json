@@ -43,8 +43,7 @@
     "downloads",
     "cookies",
     "storage",
-    "scripting",
-    "tabs"
+    "scripting"
   ],
   "host_permissions": ["*://*/"],
   "version": "4.0.0"
