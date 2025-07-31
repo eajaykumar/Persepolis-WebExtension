@@ -22,10 +22,8 @@
 
 const DEBUG = true;
 const VERSION = "4.0.0"; // TODO: Does it work?
-// const hostName = getNativeHostName();
 const browserEnv = getBrowserApi();
 const BrowserNameSpace = browserEnv.BrowserNameSpace;
-
 
 // Only set up config (icons, context menu) on install/startup, not native connection
 async function ensureExtensionConfigOnStartup() {
@@ -46,9 +44,7 @@ function detectBrowser() {
     const ua = navigator.userAgent;
     if (ua.includes("Edg")) return "edge";
     if (navigator.brave && typeof navigator.brave.isBrave === "function") return "brave";
-    if (ua.includes("Vivaldi")) return "vivaldi";
     if (ua.includes("OPR")) return "opera";
-    if (ua.includes("Chromium")) return "chromium";
     if (ua.includes("Firefox")) return "firefox";
     if (ua.includes("Chrome")) return "chrome";
     return "unknown";
@@ -122,7 +118,7 @@ async function detectLibreWolf() {
 async function initializeNativeConnection() {
     console.log("[PDM] initializeNativeConnection called");
 
-    // Detect browser and build candidate hosts
+    // Detect browser type and set hosts accordingly
     let browser = detectBrowser();
     let hosts = [];
     // Special handling for LibreWolf (async detection)
@@ -133,6 +129,7 @@ async function initializeNativeConnection() {
 
     if (browser === 'chrome') {
         hosts = [
+            // For Chrome, Chromium, Vivaldi(Will be handled by Fallback Logic as their Identitiy is same,just detecting chromium based browsers is enough)
             'com.persepolis.chrome',
             'com.persepolis.vivaldi',
             'com.persepolis.chromium',
@@ -162,7 +159,6 @@ async function initializeNativeConnection() {
 
     throw new Error("Failed to initialize native connection: No available native host.");
 }
-
 
 
 
